@@ -13,6 +13,13 @@ from ingest.common import load_with_fallback
 
 st.set_page_config(page_title="Kosovo Farmer's Price Advisor", page_icon="🌾", layout="wide")
 
+# New visitors begin with the contextual About page; its CTA opens this advisor.
+if not st.session_state.get("advisor_opened", False):
+    st.switch_page("pages/1_About.py")
+
+# The advisor uses its own sidebar controls rather than Streamlit's page list.
+st.markdown("<style>[data-testid='stSidebarNav'] {display: none !important;}</style>", unsafe_allow_html=True)
+
 SOURCES = {
     "prices": "ASKdata / ICPB04.px — monthly farm-gate prices",
     "out_idx": "ASKdata / ICPB03.px — agricultural output price index",
@@ -67,6 +74,11 @@ with st.sidebar.expander("Data status"):
     show_status(f"Weather ({region})", weather_result, "mm and °C")
     show_status("CPI inflation", inflation_result, "% per year")
     st.caption("LIVE = fetched this session; FALLBACK = bundled snapshot. Retrieved (UTC): " + prices_result.retrieved_at)
+
+st.sidebar.divider()
+if st.sidebar.button("Return to About page", icon="ℹ️", use_container_width=True):
+    st.session_state["advisor_opened"] = False
+    st.switch_page("pages/1_About.py")
 
 series = prices[prices["product"] == crop].sort_values("date")
 season = analysis.seasonality(prices, crop)
