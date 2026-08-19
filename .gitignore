@@ -1,0 +1,59 @@
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Generated and local data
+data/raw/
+data/processed/
+data/cache/
+data/tmp/
+
+# Large datasets and ML artifacts
+*.csv
+*.jsonl
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.hdf5
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.zip
+*.tar
+*.tar.gz
+*.gz
+
+# Keep the small, bundled fallback dataset used by the app
+!data/fallback/
+!data/fallback/*
+
+# Logs and local databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
