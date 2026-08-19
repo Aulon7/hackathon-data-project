@@ -30,14 +30,16 @@ def best_month(season: pd.DataFrame) -> tuple[str, str]:
 # ---- correlation: weather -> price ---------------------------------------
 
 def weather_price_panel(prices: pd.DataFrame, weather: pd.DataFrame, product: str) -> pd.DataFrame:
-    """Join ASKdata prices with Open-Meteo weather on month; add lagged weather."""
-    p = prices[prices["product"] == product][["date", "price"]].drop_duplicates("date")
-    weather = weather[["date", "rain_mm", "temp_c"]].drop_duplicates("date")
-    panel = p.merge(weather, on="date", how="inner").sort_values("date")
+    """Join ASKdata prices with Open-Meteo weather on month; add lagged weather.
+    Lags are computed on the FULL monthly weather series BEFORE the join, so
+    'rain_lag1' is always the true previous calendar month - even for seasonal
+    crops whose price series has off-season gaps."""
+    w = weather[["date", "rain_mm", "temp_c"]].drop_duplicates("date").sort_values("date").copy()
     for lag in (1, 2):
-        panel[f"rain_lag{lag}"] = panel["rain_mm"].shift(lag)
-        panel[f"temp_lag{lag}"] = panel["temp_c"].shift(lag)
-    return panel.reset_index(drop=True)
+        w[f"rain_lag{lag}"] = w["rain_mm"].shift(lag)
+        w[f"temp_lag{lag}"] = w["temp_c"].shift(lag)
+    p = prices[prices["product"] == product][["date", "price"]].drop_duplicates("date")
+    return p.merge(w, on="date", how="inner").sort_values("date").reset_index(drop=True)
 
 
 def weather_correlations(panel: pd.DataFrame) -> dict:
