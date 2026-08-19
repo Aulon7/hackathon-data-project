@@ -103,7 +103,6 @@ c2.metric("Usual value for this month", f"{month_row['avg']:.2f}", f"n={int(mont
 c3.metric("Historical high-average month", hi_month)
 if signal["next_average"] is not None:
     st.caption(f"Next 3-month seasonal baseline average: **{signal['next_average']:.2f}**. This signal is a transparent historical heuristic, not a guarantee; storage, quality, cash needs, and local buyers may change the decision.")
-st.caption("Product unit and definition are supplied by ASKdata metadata; verify them with `python scripts/validate_sources.py` before presenting a product-specific claim.")
 
 context = (f"selected product={crop}; national ASK price value={now['price']:.2f} in {now['date']:%Y-%m}; "
            f"same-calendar-month historical mean price value={month_row['avg']:.2f} based on n={int(month_row['n'])}; "
