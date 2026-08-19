@@ -27,6 +27,34 @@ def best_month(season: pd.DataFrame) -> tuple[str, str]:
     return hi, lo
 
 
+def seasonal_profile(prices: pd.DataFrame, product: str) -> pd.DataFrame:
+    """Month-by-month distribution for an explainable seasonal price chart."""
+    p = prices[prices["product"] == product].copy()
+    p["month"] = p["date"].dt.month
+    profile = p.groupby("month")["price"].agg(
+        avg="mean", median="median", low="min", high="max", n="count",
+        q25=lambda values: values.quantile(0.25),
+        q75=lambda values: values.quantile(0.75),
+    ).reset_index()
+    profile["month_name"] = profile["month"].map(lambda month: MONTH_NAMES[month - 1])
+    return profile.sort_values("month").reset_index(drop=True)
+
+
+def selling_signal(latest: pd.Series, month_average: float, forecast: pd.DataFrame) -> dict:
+    """A transparent, heuristic selling-timing label based only on displayed values."""
+    upcoming = forecast.loc[forecast["enough_history"] & forecast["forecast"].notna(), "forecast"]
+    next_average = float(upcoming.mean()) if not upcoming.empty else None
+    current = float(latest["price"])
+    versus_normal = current - month_average
+    if next_average is None:
+        return {"label": "WATCH", "reason": "Not enough history for the next-month seasonal baseline.", "next_average": None}
+    if current >= month_average and next_average < current:
+        return {"label": "SELL NOW", "reason": "Current value is at/above its usual month and the next seasonal baseline is lower.", "next_average": next_average}
+    if current < month_average and next_average > current:
+        return {"label": "WAIT / WATCH", "reason": "Current value is below its usual month and the next seasonal baseline is higher.", "next_average": next_average}
+    return {"label": "WATCH", "reason": "Current and upcoming historical values give no strong timing advantage.", "next_average": next_average}
+
+
 # ---- correlation: weather -> price ---------------------------------------
 
 def weather_price_panel(prices: pd.DataFrame, weather: pd.DataFrame, product: str) -> pd.DataFrame:

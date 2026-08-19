@@ -79,14 +79,18 @@ corrs = analysis.weather_correlations(panel)
 real = analysis.deflate(prices, inflation, crop)
 fc, backtest = analysis.forecast(prices, crop), analysis.forecast_backtest(prices, crop)
 month_row = season[season["month"] == now["date"].month].iloc[0]
+profile = analysis.seasonal_profile(prices, crop)
+signal = analysis.selling_signal(now, float(month_row["avg"]), fc)
 
 st.title(f"{crop}: kur të shes? / When should I consider selling?")
 st.caption(f"National ASK farm-gate prices through {now['date']:%B %Y}. This app supports selling timing, not a crop-profitability recommendation.")
-c1, c2, c3, c4 = st.columns(4)
+signal_col, c1, c2, c3 = st.columns([1.5, 1, 1, 1])
+signal_col.metric("Historical selling signal", signal["label"], signal["reason"])
 c1.metric(f"ASK price value / Vlera ({now['date']:%b %Y})", f"{now['price']:.2f}", f"{now['price'] - prev['price']:+.2f} vs prior month")
-c2.metric("Same month one year ago", f"{float(yoy['price'].iloc[0]):.2f}" if len(yoy) else "n/a")
-c3.metric("Historical highest-average month", hi_month)
-c4.metric("Historical lowest-average month", lo_month)
+c2.metric("Usual value for this month", f"{month_row['avg']:.2f}", f"n={int(month_row['n'])} historical observations")
+c3.metric("Historical high-average month", hi_month)
+if signal["next_average"] is not None:
+    st.caption(f"Next 3-month seasonal baseline average: **{signal['next_average']:.2f}**. This signal is a transparent historical heuristic, not a guarantee; storage, quality, cash needs, and local buyers may change the decision.")
 st.caption("Product unit and definition are supplied by ASKdata metadata; verify them with `python scripts/validate_sources.py` before presenting a product-specific claim.")
 
 context = (f"selected product={crop}; national ASK price value={now['price']:.2f} in {now['date']:%Y-%m}; "
@@ -104,33 +108,68 @@ if st.button("🤖 AI insight / Analiza AI"):
 
 t1, t2, t3, t4 = st.tabs(["📅 Selling timing", "🌦️ Weather context", "⚖️ Price-cost context", "💶 Real prices"])
 with t1:
+    st.subheader("Historical selling calendar")
+    fig = go.Figure()
+    fig.add_scatter(x=profile["month_name"], y=profile["q75"], line=dict(width=0), showlegend=False, hoverinfo="skip")
+    fig.add_scatter(x=profile["month_name"], y=profile["q25"], fill="tonexty", line=dict(width=0), fillcolor="rgba(29, 158, 117, 0.18)", name="middle 50% of observed values", hovertemplate="%{x}<br>Middle 50%: %{y:.2f}<extra></extra>")
+    fig.add_scatter(x=profile["month_name"], y=profile["avg"], mode="lines+markers", name="historical average", line=dict(color="#1D9E75", width=3), customdata=profile[["n", "low", "high", "median"]], hovertemplate="%{x}<br>Average: %{y:.2f}<br>Median: %{customdata[3]:.2f}<br>Observed range: %{customdata[1]:.2f}–%{customdata[2]:.2f}<br>Observations: %{customdata[0]}<extra></extra>")
+    fig.add_scatter(x=[now["date"].strftime("%B")], y=[now["price"]], mode="markers", name=f"latest ({now['date']:%b %Y})", marker=dict(color="#D85A30", size=13, symbol="diamond"), hovertemplate=f"Latest: {now['price']:.2f}<extra></extra>")
+    fig.add_annotation(x=hi_month, y=float(profile.loc[profile["month_name"] == hi_month, "avg"].iloc[0]), text="historical high", showarrow=True, arrowhead=2, yshift=30)
+    fig.update_layout(height=410, yaxis_title="ASK price-value units", xaxis_title="Calendar month", legend=dict(orientation="h", y=1.12), margin=dict(t=65))
+    st.plotly_chart(fig, width="stretch")
+    st.caption("Green line: historical average. Shaded band: middle 50% of observed values. Orange diamond: the latest price, placed in its calendar month. Use the tooltip to see range and observation count.")
     left, right = st.columns(2)
     with left:
-        plot = season.copy(); plot["label"] = plot.apply(lambda r: f"{r['month_name']} (n={int(r['n'])})", axis=1)
-        fig = px.bar(plot, x="label", y="avg", labels={"label": "", "avg": "average ASK price value"}, color=plot["month_name"].eq(hi_month), color_discrete_map={True: "#1D9E75", False: "#B4B2A9"})
-        fig.update_layout(showlegend=False, height=360); st.plotly_chart(fig, width="stretch")
-        st.success(f"Historical average is highest in **{hi_month}** and lowest in **{lo_month}**. Missing months are not imputed.")
+        st.subheader("Recent price movement")
+        hist = series.tail(30)
+        recent = go.Figure()
+        recent.add_scatter(x=hist["date"], y=hist["price"], mode="lines+markers", name="observed price", line=dict(color="#378ADD", width=3))
+        recent.add_hline(y=float(month_row["avg"]), line_dash="dash", line_color="#1D9E75", annotation_text=f"usual {now['date']:%B} value: {month_row['avg']:.2f}")
+        recent.add_scatter(x=[now["date"]], y=[now["price"]], mode="markers", marker=dict(color="#D85A30", size=12), name="latest")
+        recent.update_layout(height=330, yaxis_title="ASK price-value units", legend=dict(orientation="h", y=1.12))
+        st.plotly_chart(recent, width="stretch")
     with right:
-        valid_fc = fc[fc["enough_history"]]; fig = go.Figure(); hist = series.tail(24)
-        fig.add_scatter(x=hist["date"], y=hist["price"], name="history")
-        if not valid_fc.empty:
-            fig.add_scatter(x=valid_fc["date"], y=valid_fc["hi"], line=dict(width=0), showlegend=False)
-            fig.add_scatter(x=valid_fc["date"], y=valid_fc["lo"], fill="tonexty", line=dict(width=0), name="historical variability band", fillcolor="rgba(29,158,117,0.2)")
-            fig.add_scatter(x=valid_fc["date"], y=valid_fc["forecast"], mode="lines+markers", name="seasonal baseline", line=dict(dash="dash", color="#1D9E75"))
-        fig.update_layout(height=360, yaxis_title="ASK price-value units", legend=dict(orientation="h", y=1.1)); st.plotly_chart(fig, width="stretch")
-        st.caption("Seasonal baseline = historical same-calendar-month average ± one standard deviation; it is not a trained predictive model.")
-        if fc["enough_history"].all(): st.caption(f"Forecast n: {', '.join(str(int(n)) for n in fc['n'])}. Rolling one-step backtest: n={backtest['n']}, MAE={backtest['mae'] if backtest['mae'] is not None else 'n/a'} price-value units.")
-        else: st.warning("One or more forecast months have fewer than three historical observations, so no precise baseline is shown.")
+        st.subheader("Next 3 months: seasonal baseline")
+        shown_fc = fc.copy(); shown_fc["month"] = shown_fc["date"].dt.strftime("%b %Y")
+        st.dataframe(shown_fc[["month", "forecast", "lo", "hi", "n"]].rename(columns={"month": "Month", "forecast": "Baseline", "lo": "Low band", "hi": "High band", "n": "Historical n"}), hide_index=True, width="stretch")
+        st.caption("Baseline = same-calendar-month historic average; band = ± one standard deviation. It is not a trained predictive model.")
+        if fc["enough_history"].all(): st.caption(f"Rolling one-step backtest: n={backtest['n']}, MAE={backtest['mae'] if backtest['mae'] is not None else 'n/a'} price-value units.")
+        else: st.warning("One or more months have fewer than three historical observations, so no precise baseline is shown.")
 with t2:
-    st.subheader(f"Weather context for {region} and national {crop} price")
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_scatter(x=panel["date"], y=panel["price"], name=f"{crop} price"); fig.add_bar(x=panel["date"], y=panel["rain_mm"], name="rain (mm)", opacity=0.4, marker_color="#378ADD", secondary_y=True)
-    fig.update_layout(height=380, legend=dict(orientation="h", y=1.1)); fig.update_yaxes(title_text="ASK price value", secondary_y=False); fig.update_yaxes(title_text="rain (mm)", secondary_y=True); st.plotly_chart(fig, width="stretch")
-    cc = st.columns(3); cc[0].metric("Same-month rain correlation", corrs["rain_mm"]); cc[1].metric("Rain one month earlier", corrs["rain_lag1"]); cc[2].metric("Temperature two months earlier", corrs["temp_lag2"])
-    st.caption(f"Matched months: {len(panel)} ({panel['date'].min():%Y-%m}–{panel['date'].max():%Y-%m}). Exploratory only: ASK prices are national and weather comes from a {region} city coordinate; correlation does not establish causation.")
+    st.subheader(f"Recent weather context: {region}")
+    weather_recent = panel.tail(18)
+    relationship = abs(corrs["rain_mm"]) if corrs["rain_mm"] is not None else 0
+    relationship_text = "little visible relationship" if relationship < 0.3 else "a possible relationship worth watching"
+    a, b, c = st.columns(3)
+    a.metric("Latest rainfall", f"{weather_recent.iloc[-1]['rain_mm']:.0f} mm", f"{weather_recent.iloc[-1]['date']:%B %Y}")
+    b.metric("Latest temperature", f"{weather_recent.iloc[-1]['temp_c']:.1f} °C")
+    c.metric("Weather-price pattern", relationship_text)
+    st.info(f"In the available data, rainfall and the national {crop} price show **{relationship_text}**. Use this as local context, not as a prediction or proof of cause.")
+    weather_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    weather_fig.add_bar(
+        x=weather_recent["date"], y=weather_recent["rain_mm"], name=f"rainfall in {region}",
+        marker_color="#9EC5FE", opacity=0.55, zorder=0, secondary_y=True,
+    )
+    weather_fig.add_scatter(
+        x=weather_recent["date"], y=weather_recent["price"], mode="lines+markers",
+        name=f"national {crop} price", line=dict(color="#087F5B", width=5),
+        marker=dict(size=9, color="#087F5B", line=dict(color="white", width=2)),
+        zorder=10, secondary_y=False,
+    )
+    weather_fig.update_layout(
+        height=410, title=f"National {crop} price and monthly rainfall in {region}",
+        legend=dict(orientation="h", y=1.12), bargap=0.25,
+    )
+    weather_fig.update_yaxes(title_text="ASK price value", secondary_y=False)
+    weather_fig.update_yaxes(title_text="rainfall (mm)", secondary_y=True)
+    st.plotly_chart(weather_fig, width="stretch")
+    st.caption(f"Green line = national ASK price; blue bars = rainfall in {region}. Both use the same latest 18 matched months. ASK prices are national while weather is measured at a {region} city coordinate; correlation does not establish causation.")
 with t3:
     st.subheader("Kosovo-wide agricultural price-cost index ratio (proxy)")
-    fig = go.Figure(); fig.add_scatter(x=ms["date"], y=ms["out_rebased"], name="output price index"); fig.add_scatter(x=ms["date"], y=ms["in_rebased"], name="input price index"); fig.add_scatter(x=ms["date"], y=ms["margin"], name="price-cost index ratio", line=dict(dash="dot", color="#D85A30")); fig.add_hline(y=100, line_dash="dash", line_color="gray")
+    ratio_col, chart_col = st.columns([1, 2])
+    ratio_col.metric("Latest ratio", f"{ms.iloc[-1]['margin']:.1f}", "Jan 2022 = 100")
+    ratio_col.caption("Above 100 means the national output-price index has risen faster than the national input-price index since Jan 2022.")
+    fig = go.Figure(); fig.add_scatter(x=ms["date"], y=ms["out_rebased"], name="output price index", line=dict(color="#1D9E75", width=3)); fig.add_scatter(x=ms["date"], y=ms["in_rebased"], name="input price index", line=dict(color="#D85A30", width=3)); fig.add_hline(y=100, line_dash="dash", line_color="gray")
     fig.update_layout(height=380, yaxis_title="index, Jan 2022 = 100", legend=dict(orientation="h", y=1.1)); st.plotly_chart(fig, width="stretch")
     st.info(f"Latest ratio: **{ms.iloc[-1]['margin']:.1f}** in {ms.iloc[-1]['date']:%B %Y}. Above 100 means national output prices rose faster than national input prices since Jan 2022; it is not this crop's or this farm's profit margin.")
 with t4:
