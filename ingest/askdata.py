@@ -44,6 +44,25 @@ def _url(segments):
     return BASE + "/" + "/".join(requests.utils.quote(s, safe="") for s in segments)
 
 
+TABLES = {
+    "prices": _OUTPUT_NODE + ["ICPB04.px"],
+    "output_index": _OUTPUT_NODE + ["ICPB03.px"],
+    "input_index": _INPUT_NODE + ["indeksi-mujore.px"],
+}
+
+
+def table_url(name: str) -> str:
+    """Public URL for a known table, useful in provenance reports."""
+    return _url(TABLES[name])
+
+
+def fetch_metadata(name: str) -> dict:
+    """Fetch raw PxWeb metadata for a known table."""
+    response = requests.get(table_url(name), timeout=60)
+    response.raise_for_status()
+    return response.json()
+
+
 def _fetch_full(segments, filters: dict | None = None) -> pd.DataFrame:
     """Fetch a PxWeb table as a tidy DataFrame, requesting EVERY dimension
     explicitly (metadata-driven) so nothing gets silently eliminated.
@@ -82,7 +101,7 @@ def _add_date(df):
 
 
 def fetch_monthly_prices() -> pd.DataFrame:
-    """Farm-gate prices, EUR, for 32 products. Columns: product, date, price."""
+    """Farm-gate price values for 32 products. Verify source units via metadata."""
     df = _add_date(_fetch_full(_OUTPUT_NODE + ["ICPB04.px"]))
     out = df.rename(columns={_col(df, "output"): "product", "value": "price"})
     out = out[["product", "date", "price"]].dropna(subset=["price"])
@@ -93,7 +112,7 @@ def fetch_output_index() -> pd.DataFrame:
     """Total agricultural output price index, monthly. Columns: date, out_index."""
     df = _add_date(_fetch_full(
         _OUTPUT_NODE + ["ICPB03.px"],
-        filters={"Kodi i artikullit/grupet": ["45"]},  # '14 Total Output'
+        filters={"Kodi i artikullit/grupet": ["45"]},  # verified live: '14 Total Output'
     ))
     out = df.rename(columns={"value": "out_index"})[["date", "out_index"]]
     return out.dropna().sort_values("date").reset_index(drop=True)
@@ -103,7 +122,7 @@ def fetch_input_index() -> pd.DataFrame:
     """Total agricultural input price index (2020=100), monthly. Columns: date, in_index."""
     df = _add_date(_fetch_full(
         _INPUT_NODE + ["indeksi-mujore.px"],
-        filters={"Kodi  i I\u00c7PB / P\u00ebrshkrimi": ["20"]},  # '220000 INPUT TOTAL'
+        filters={"Kodi  i I\u00c7PB / P\u00ebrshkrimi": ["20"]},  # verified live: '220000 INPUT TOTAL (INPUT 1 + INPUT 2)'
     ))
     out = df.rename(columns={"value": "in_index"})[["date", "in_index"]]
     return out.dropna().sort_values("date").reset_index(drop=True)

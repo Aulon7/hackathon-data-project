@@ -1,68 +1,55 @@
-# 🌾 Keshilltari i Fermerit — Farmer's Price Advisor (Kosovo)
+# 🌾 Këshilltari i Fermerit — Kosovo Farmer's Price Advisor
 
-A data app for **one person**: a Kosovar farmer deciding *what to plant* and *when to sell*.
-Built for the MICP Data Science hackathon. Every dataset is about Kosovo and every dataset
-enters the app through a **live API** — no CSV uploads.
+A Streamlit decision-support app for a Kosovar farmer deciding **when to consider selling a selected product**. It does not recommend what to plant or calculate farm profit: crop-specific yield, costs, storage, and suitability data are not included.
 
-## Quickstart
+## What it does
 
-    pip install -r requirements.txt
-    streamlit run app.py
+- Shows national ASKdata product-price seasonality with observation counts.
+- Provides a three-month **seasonal baseline** with a minimum-history rule and rolling backtest MAE.
+- Combines national prices and selected-city weather as exploratory correlations only.
+- Shows a national agricultural **price-cost index ratio proxy**, not a farm profit margin.
+- Shows annual-CPI-adjusted prices only through the latest published Kosovo CPI year.
+- Provides an optional Anthropic AI insight or an honest rule-based fallback summary.
 
-First load fetches everything live (~20s), then it's cached for 1 hour.
-`python test_pipeline.py` runs the whole ingest + analysis pipeline headless.
+## Setup and verification
 
-**AI insights (optional):** create `.streamlit/secrets.toml` with
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pytest -q
+python scripts/validate_sources.py
+python test_pipeline.py
+streamlit run app.py
+```
 
-    ANTHROPIC_API_KEY = "sk-ant-..."
+## Data and availability
 
-Without a key the app still works and shows the aggregated context it would send.
+The app is live-first: it requests public APIs and falls back to bundled Parquet snapshots when a source is unavailable. Normal app runs never overwrite snapshots. The UI labels data `LIVE` or `FALLBACK` and displays coverage.
 
-## Deploy (free)
+| Dataset | Provider | Use |
+|---|---|---|
+| Farm-gate prices (`ICPB04.px`) | ASKdata | Product history, seasonality, baseline. |
+| Output/input indices (`ICPB03.px`, `indeksi-mujore.px`) | ASKdata | National price-cost proxy. |
+| Regional weather | Open-Meteo Archive | Exploratory weather/price panel. |
+| Kosovo CPI (`XKX`, `FP.CPI.TOTL.ZG`) | World Bank | Annual-frequency real-price approximation. |
 
-Push this folder to GitHub → share.streamlit.io → New app → pick the repo, main file
-`app.py` → add `ANTHROPIC_API_KEY` under app **Settings → Secrets** → Deploy.
-You get a public URL for the judges.
+See [docs/data_sources.md](docs/data_sources.md) for endpoint, grain, unit, join, and limitation details.
 
-## Data (all Kosovo, all live APIs)
+## Optional AI insight
 
-| Dataset | Source | Table / series | Join key |
-|---|---|---|---|
-| Farm-gate prices, 32 products, monthly 2022→ | ASKdata (PxWeb API) | `ICPB04.px` | month |
-| Output price index, monthly 2015→ | ASKdata | `ICPB03.px`, category "Total Output" | month |
-| Input price index (2020=100), monthly 2015→ | ASKdata | `indeksi-mujore.px`, "INPUT TOTAL" | month |
-| Weather (rain, temperature) at your region | Open-Meteo archive | daily → aggregated monthly | month |
-| Kosovo CPI inflation | World Bank, country **XKX** | `FP.CPI.TOTL.ZG` | year |
+Create `.streamlit/secrets.toml` (never commit it):
 
-## How the sources are *genuinely combined*
+```toml
+ANTHROPIC_API_KEY = "your-key"
+```
 
-- **Seasonality + forecast** (trend): best/cheapest month per crop; next 3 months as
-  same-calendar-month average ± 1 std.
-- **Weather → price** (correlation): your region's rain/temperature vs national prices,
-  at 0–2 month lags. The app says out loud that correlation ≠ causation.
-- **Margin squeeze** (comparison): output vs input index, both rebased to Jan 2022 = 100.
-  As of mid-2026: output ≈ 144 vs input ≈ 124 → margin ≈ 117, i.e. prices have outrun costs.
-- **Real prices**: nominal EUR deflated by Kosovo's own CPI into 2022 money.
-- **AI insight**: one LLM call on the aggregated numbers → 3 plain sentences (SQ + EN)
-  incl. an anomaly flag.
+The LLM receives aggregate values only and is instructed not to make causal, planting, or profit claims. Without a key, the app displays a clearly labelled rule-based summary.
 
-## Resilience
+## Important limitations
 
-Every fetch is wrapped in `with_fallback`: live API first, snapshot to
-`data/fallback/*.parquet` on success, load the snapshot if the API is down.
-The shipped snapshots mean the demo works even on dead wifi — but by default it is live.
-
-## Structure
-
-    app.py             Streamlit UI (persona header, metrics, AI insight, 4 tabs)
-    analysis.py        seasonality, correlations, margin squeeze, deflation, forecast
-    ai.py              LLM insight on aggregated data (anthropic, optional)
-    ingest/askdata.py  PxWeb client for the 3 ASK tables (all quirks documented inline)
-    ingest/openmeteo.py, ingest/worldbank.py, ingest/common.py (retry + fallback)
-    test_pipeline.py   headless end-to-end test against the live APIs
-
-## Known limits (say these to the judges before they ask)
-
-- ASK prices are **national**, weather is **regional** — the correlation view is indicative.
-- The forecast is a seasonal average, chosen for explainability over sophistication.
-- ASK publishes prices with ~1–2 months lag; the app shows the latest month automatically.
+- ASK prices are national; weather is a selected city coordinate. Correlation does not establish causation.
+- The seasonal baseline is not a trained forecast and can be weak for sparse seasonal products.
+- The index ratio is national and aggregate, not a crop/farm margin.
+- Annual CPI is a coarse deflator for monthly prices; later dates remain blank until CPI is published.
+- Verify ASK product units and definitions with `python scripts/validate_sources.py` before making a product-specific public claim.

@@ -17,7 +17,7 @@ def seasonality(prices: pd.DataFrame, product: str) -> pd.DataFrame:
     p["month"] = p["date"].dt.month
     g = p.groupby("month")["price"].agg(avg="mean", std="std", n="count").reset_index()
     g["month_name"] = g["month"].map(lambda m: MONTH_NAMES[m - 1])
-    return g
+    return g.sort_values("month").reset_index(drop=True)
 
 
 def best_month(season: pd.DataFrame) -> tuple[str, str]:
@@ -31,7 +31,8 @@ def best_month(season: pd.DataFrame) -> tuple[str, str]:
 
 def weather_price_panel(prices: pd.DataFrame, weather: pd.DataFrame, product: str) -> pd.DataFrame:
     """Join ASKdata prices with Open-Meteo weather on month; add lagged weather."""
-    p = prices[prices["product"] == product][["date", "price"]]
+    p = prices[prices["product"] == product][["date", "price"]].drop_duplicates("date")
+    weather = weather[["date", "rain_mm", "temp_c"]].drop_duplicates("date")
     panel = p.merge(weather, on="date", how="inner").sort_values("date")
     for lag in (1, 2):
         panel[f"rain_lag{lag}"] = panel["rain_mm"].shift(lag)
@@ -70,22 +71,29 @@ def margin_squeeze(out_idx: pd.DataFrame, in_idx: pd.DataFrame,
 def deflate(prices: pd.DataFrame, inflation: pd.DataFrame, product: str,
             base_year: int = 2022) -> pd.DataFrame:
     """Nominal -> real EUR (base-year money) using Kosovo's own CPI. Columns: date, price, real_price."""
-    infl = inflation.set_index("year")["inflation_pct"]
+    infl = inflation.drop_duplicates("year").set_index("year")["inflation_pct"]
     years = sorted(prices["date"].dt.year.unique())
     cpi, level = {}, 100.0
     for y in years:
         if y > base_year:
-            level *= 1 + float(infl.get(y, infl.iloc[-1])) / 100
+            if y not in infl.index:
+                cpi[y] = None
+                continue
+            level *= 1 + float(infl.loc[y]) / 100
         cpi[y] = level
     cpi[base_year] = 100.0
     p = prices[prices["product"] == product][["date", "price"]].copy()
-    p["real_price"] = p.apply(lambda r: r["price"] / cpi[r["date"].year] * 100, axis=1)
+    p["real_price"] = p.apply(
+        lambda r: r["price"] / cpi[r["date"].year] * 100
+        if cpi.get(r["date"].year) is not None else float("nan"), axis=1
+    )
+    p["cpi_available"] = p["real_price"].notna()
     return p.reset_index(drop=True)
 
 
 # ---- forecast: seasonal average with honest band --------------------------
 
-def forecast(prices: pd.DataFrame, product: str, horizon: int = 3) -> pd.DataFrame:
+def forecast(prices: pd.DataFrame, product: str, horizon: int = 3, min_observations: int = 3) -> pd.DataFrame:
     """Next months' expected price = average of the same calendar month in past
     years, band = +/-1 std. Deliberately simple and explainable to a judge.
     Columns: date, forecast, lo, hi."""
@@ -94,8 +102,30 @@ def forecast(prices: pd.DataFrame, product: str, horizon: int = 3) -> pd.DataFra
     rows = []
     for i in range(1, horizon + 1):
         d = (last + pd.DateOffset(months=i)).replace(day=1)
+        if d.month not in season.index:
+            rows.append({"date": d, "forecast": float("nan"), "lo": float("nan"), "hi": float("nan"),
+                         "n": 0, "enough_history": False})
+            continue
         s = season.loc[d.month]
+        enough_history = int(s["n"]) >= min_observations
         std = 0.0 if pd.isna(s["std"]) else float(s["std"])
-        rows.append({"date": d, "forecast": float(s["avg"]),
-                     "lo": float(s["avg"]) - std, "hi": float(s["avg"]) + std})
+        rows.append({"date": d, "forecast": float(s["avg"]) if enough_history else float("nan"),
+                     "lo": float(s["avg"]) - std if enough_history else float("nan"),
+                     "hi": float(s["avg"]) + std if enough_history else float("nan"),
+                     "n": int(s["n"]), "enough_history": enough_history})
     return pd.DataFrame(rows)
+
+
+def forecast_backtest(prices: pd.DataFrame, product: str, min_observations: int = 3) -> dict:
+    """Rolling-origin one-step seasonal-baseline accuracy, using past data only."""
+    series = prices[prices["product"] == product][["date", "price"]].sort_values("date")
+    errors = []
+    for _, row in series.iterrows():
+        history = series[series["date"] < row["date"]]
+        same_month = history[history["date"].dt.month == row["date"].month]["price"]
+        if len(same_month) >= min_observations:
+            prediction = same_month.mean()
+            errors.append(abs(row["price"] - prediction))
+    if not errors:
+        return {"n": 0, "mae": None}
+    return {"n": len(errors), "mae": round(float(pd.Series(errors).mean()), 3)}

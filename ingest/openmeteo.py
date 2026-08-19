@@ -1,6 +1,7 @@
 """Monthly weather for Kosovo regions from the Open-Meteo historical archive (no key)."""
 import pandas as pd
 import requests
+from pathlib import Path
 
 from .common import retry_get
 
@@ -14,6 +15,12 @@ REGIONS = {
     "Gjilan":    (42.4635, 21.4694),
 }
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+
+
+def fallback_regions() -> list[str]:
+    """Regions with a bundled weather snapshot, safe to offer in offline mode."""
+    fallback_dir = Path(__file__).resolve().parent.parent / "data" / "fallback"
+    return [region for region in REGIONS if (fallback_dir / f"weather_{region}.parquet").exists()]
 
 def fetch_monthly_weather(region: str = "Prishtina", start: str = "2022-01-01") -> pd.DataFrame:
     """Daily rain/temperature aggregated to calendar months. Columns: date, rain_mm, temp_c."""

@@ -1,9 +1,5 @@
-"""Keshilltari i Fermerit - a data app for a Kosovar farmer deciding
-what to plant and when to sell. All data is about Kosovo, fetched live:
-ASKdata (prices + input costs), Open-Meteo (weather at Kosovo coordinates),
-World Bank (Kosovo XKX inflation)."""
+"""Kosovo Farmer's Price Advisor: evidence for selling timing, not crop choice."""
 import os
-
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -13,205 +9,133 @@ import streamlit as st
 import ai
 import analysis
 from ingest import askdata, openmeteo, worldbank
-from ingest.common import with_fallback
+from ingest.common import load_with_fallback
 
-st.set_page_config(page_title="Keshilltari i Fermerit", page_icon="🌾", layout="wide")
+st.set_page_config(page_title="Këshilltari i Fermerit", page_icon="🌾", layout="wide")
+
+SOURCES = {
+    "prices": "ASKdata / ICPB04.px — monthly farm-gate prices",
+    "out_idx": "ASKdata / ICPB03.px — agricultural output price index",
+    "in_idx": "ASKdata / indeksi-mujore.px — agricultural input price index",
+    "weather": "Open-Meteo Archive — monthly weather at selected city coordinate",
+    "inflation": "World Bank XKX / FP.CPI.TOTL.ZG — annual CPI inflation",
+}
 
 
-# ---- cached live loaders (automation: live API + 1h cache + parquet fallback) ----
-
-@st.cache_data(ttl=3600, show_spinner="Duke marre cmimet nga ASK... / fetching prices...")
-def load_prices():
-    return with_fallback("prices", askdata.fetch_monthly_prices)
-
+@st.cache_data(ttl=3600, show_spinner="Fetching ASK farm-gate prices…")
+def load_prices(): return load_with_fallback("prices", askdata.fetch_monthly_prices, SOURCES["prices"])
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_out_idx():
-    return with_fallback("out_idx", askdata.fetch_output_index)
-
+def load_out_idx(): return load_with_fallback("out_idx", askdata.fetch_output_index, SOURCES["out_idx"])
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_in_idx():
-    return with_fallback("in_idx", askdata.fetch_input_index)
-
-@st.cache_data(ttl=3600, show_spinner="Duke marre motin... / fetching weather...")
-def load_weather(region: str):
-    return with_fallback(f"weather_{region}", lambda: openmeteo.fetch_monthly_weather(region))
-
+def load_in_idx(): return load_with_fallback("in_idx", askdata.fetch_input_index, SOURCES["in_idx"])
+@st.cache_data(ttl=3600, show_spinner="Fetching regional weather…")
+def load_weather(region): return load_with_fallback(f"weather_{region}", lambda: openmeteo.fetch_monthly_weather(region), SOURCES["weather"])
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_inflation():
-    return with_fallback("inflation", worldbank.fetch_inflation)
-
-@st.cache_data(ttl=3600, show_spinner="AI po analizon... / AI is thinking...")
-def cached_insight(context: str, _key):
-    return ai.generate_insight(context, _key)
+def load_inflation(): return load_with_fallback("inflation", worldbank.fetch_inflation, SOURCES["inflation"])
+@st.cache_data(ttl=3600, show_spinner="Preparing AI insight…")
+def cached_insight(context, key): return ai.generate_insight(context, key)
 
 
 def api_key():
-    try:
-        return st.secrets["ANTHROPIC_API_KEY"]
-    except Exception:
-        return os.environ.get("ANTHROPIC_API_KEY")
+    try: return st.secrets["ANTHROPIC_API_KEY"]
+    except Exception: return os.environ.get("ANTHROPIC_API_KEY")
 
 
-# ---- data ----
+def show_status(name, result, unit):
+    st.write(f"**{name}:** {result.status.upper()} · {result.coverage.replace(' 00:00:00', '')} · {unit}")
 
-prices = load_prices()
-out_idx = load_out_idx()
-in_idx = load_in_idx()
-inflation = load_inflation()
 
-st.sidebar.title("🌾 Keshilltari i Fermerit")
-st.sidebar.caption("Built for: a Kosovar farmer deciding **what to plant** "
-                   "and **when to sell**. / Per fermerin qe vendos cka te mbjelle "
-                   "e kur te shese.")
+prices_result, out_result, in_result, inflation_result = load_prices(), load_out_idx(), load_in_idx(), load_inflation()
+prices, out_idx, in_idx, inflation = prices_result.data, out_result.data, in_result.data, inflation_result.data
+safe_regions = openmeteo.fallback_regions()
+if not safe_regions:
+    st.error("No bundled weather fallback is available. Restore data/fallback/weather_*.parquet.")
+    st.stop()
+
+st.sidebar.title("🌾 Këshilltari i Fermerit")
+st.sidebar.caption("For a Kosovar farmer deciding when to sell a selected product. / Për kohën e shitjes së një produkti të zgjedhur.")
 products = sorted(prices["product"].unique())
-crop = st.sidebar.selectbox("Produkti / Crop", products,
-                            index=products.index("Potato") if "Potato" in products else 0)
-region = st.sidebar.selectbox("Regjioni / Your region", list(openmeteo.REGIONS))
-weather = load_weather(region)
-
-latest_date = prices["date"].max()
-st.sidebar.caption(f"📡 Live APIs, cached 1h. Latest ASK price month: "
-                   f"**{latest_date:%B %Y}**. All data is about Kosovo 🇽🇰")
-with st.sidebar.expander("Burimet / Data sources"):
-    st.markdown(
-        "- **ASKdata** - monthly farm-gate prices (ICPB04) and the output (ICPB03) "
-        "& input price indices, Kosovo Agency of Statistics\n"
-        "- **Open-Meteo** - monthly weather history at your region's coordinates\n"
-        "- **World Bank** - Kosovo (XKX) CPI inflation, used to compute real prices"
-    )
-
-# ---- header + headline metrics ----
-
-st.title(f"{crop} - a po ia vlen sivjet? / Is it worth it this year?")
+crop = st.sidebar.selectbox("Produkt / Product", products, index=products.index("Potato") if "Potato" in products else 0)
+region = st.sidebar.selectbox("Rajoni i motit / Weather region", safe_regions)
+weather_result = load_weather(region)
+weather = weather_result.data
+st.sidebar.caption("Only regions with bundled weather snapshots are shown so the app also works offline.")
+with st.sidebar.expander("Statusi i të dhënave / Data status"):
+    show_status("Farm-gate prices", prices_result, "unit: verify in ASK metadata")
+    show_status("Output index", out_result, "index")
+    show_status("Input index", in_result, "index")
+    show_status(f"Weather ({region})", weather_result, "mm and °C")
+    show_status("CPI inflation", inflation_result, "% per year")
+    st.caption("LIVE = fetched this session; FALLBACK = bundled snapshot. Retrieved (UTC): " + prices_result.retrieved_at)
 
 series = prices[prices["product"] == crop].sort_values("date")
 season = analysis.seasonality(prices, crop)
 hi_month, lo_month = analysis.best_month(season)
-now = series.iloc[-1]
-prev = series.iloc[-2] if len(series) > 1 else now
+now, prev = series.iloc[-1], series.iloc[-2] if len(series) > 1 else series.iloc[-1]
 yoy = series[series["date"] == now["date"] - pd.DateOffset(years=1)]
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric(f"Cmimi {now['date']:%b %Y} / price", f"{now['price']:.2f} EUR",
-          f"{now['price'] - prev['price']:+.2f} vs muajin e kaluar")
-c2.metric("Nje vit me pare / a year ago",
-          f"{float(yoy['price'].iloc[0]):.2f} EUR" if len(yoy) else "n/a",
-          f"{now['price'] - float(yoy['price'].iloc[0]):+.2f}" if len(yoy) else None)
-c3.metric("Muaji me i mire per shitje / best month to sell", hi_month)
-c4.metric("Muaji me i lire / cheapest month", lo_month)
-
-# ---- AI insight (rubric: in-app LLM summary + anomaly flag) ----
-
 ms = analysis.margin_squeeze(out_idx, in_idx)
 panel = analysis.weather_price_panel(prices, weather, crop)
 corrs = analysis.weather_correlations(panel)
 real = analysis.deflate(prices, inflation, crop)
-this_month_norm = season[season["month"] == now["date"].month]["avg"].iloc[0]
+fc, backtest = analysis.forecast(prices, crop), analysis.forecast_backtest(prices, crop)
+month_row = season[season["month"] == now["date"].month].iloc[0]
 
-context = (
-    f"crop={crop}; latest_price_eur={now['price']:.2f} ({now['date']:%Y-%m}); "
-    f"seasonal_norm_for_this_calendar_month={this_month_norm:.2f}; "
-    f"best_month_to_sell={hi_month}; cheapest_month={lo_month}; "
-    f"margin_index_now={ms.iloc[-1]['margin']:.1f} (Jan2022=100, >100 means prices beat input costs); "
-    f"weather_price_correlations={corrs} (region={region}); "
-    f"latest_real_price_2022_money={real.iloc[-1]['real_price']:.2f}"
-)
-if st.button("🤖 Analiza AI / AI insight"):
-    text = cached_insight(context, api_key())
-    if text:
-        st.info(text)
+st.title(f"{crop}: kur të shes? / When should I consider selling?")
+st.caption(f"National ASK farm-gate prices through {now['date']:%B %Y}. This app supports selling timing, not a crop-profitability recommendation.")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric(f"ASK price value / Vlera ({now['date']:%b %Y})", f"{now['price']:.2f}", f"{now['price'] - prev['price']:+.2f} vs prior month")
+c2.metric("Same month one year ago", f"{float(yoy['price'].iloc[0]):.2f}" if len(yoy) else "n/a")
+c3.metric("Historical highest-average month", hi_month)
+c4.metric("Historical lowest-average month", lo_month)
+st.caption("Product unit and definition are supplied by ASKdata metadata; verify them with `python scripts/validate_sources.py` before presenting a product-specific claim.")
+
+context = (f"selected product={crop}; national ASK price value={now['price']:.2f} in {now['date']:%Y-%m}; "
+           f"same-calendar-month historical mean price value={month_row['avg']:.2f} based on n={int(month_row['n'])}; "
+           f"historical high-average month={hi_month}; low-average month={lo_month}; "
+           f"agricultural price-cost index ratio={ms.iloc[-1]['margin']:.1f} in {ms.iloc[-1]['date']:%Y-%m}; "
+           f"weather-price correlations={corrs}, n_matched_months={len(panel)}, weather_region={region}; "
+           f"real price available through {real.loc[real['cpi_available'], 'date'].max():%Y-%m} using annual CPI")
+if st.button("🤖 AI insight / Analiza AI"):
+    insight = cached_insight(context, api_key())
+    if insight: st.info(insight)
     else:
-        st.warning("Add ANTHROPIC_API_KEY to .streamlit/secrets.toml to enable AI insights. "
-                   "The aggregated context the model would receive is shown below.")
-        st.code(context)
+        st.info(ai.rule_based_summary(crop, now, month_row, hi_month, ms.iloc[-1], len(panel)))
+        st.caption("Rule-based fallback: no Anthropic API key or the AI request was unavailable.")
 
-# ---- tabs: the four analyses ----
-
-t1, t2, t3, t4 = st.tabs(["📅 Kur te shes? / When to sell",
-                          "🌦️ Moti & cmimet / Weather vs price",
-                          "⚖️ Kostot / Costs vs prices",
-                          "💶 Cmimet reale / Real prices"])
-
+t1, t2, t3, t4 = st.tabs(["📅 Selling timing", "🌦️ Weather context", "⚖️ Price-cost context", "💶 Real prices"])
 with t1:
     left, right = st.columns(2)
     with left:
-        st.subheader("Sezonaliteti / Seasonal pattern")
-        fig = px.bar(season, x="month_name", y="avg",
-                     labels={"month_name": "", "avg": "avg price (EUR)"},
-                     color=season["month_name"].eq(hi_month),
-                     color_discrete_map={True: "#1D9E75", False: "#B4B2A9"})
-        fig.update_layout(showlegend=False, height=360)
-        st.plotly_chart(fig, width="stretch")
-        st.success(f"Mesatarisht, **{crop}** shitet me se shtrenjti ne **{hi_month}** "
-                   f"dhe me se liri ne **{lo_month}**. / On average, {crop} sells "
-                   f"highest in {hi_month} and lowest in {lo_month}.")
+        plot = season.copy(); plot["label"] = plot.apply(lambda r: f"{r['month_name']} (n={int(r['n'])})", axis=1)
+        fig = px.bar(plot, x="label", y="avg", labels={"label": "", "avg": "average ASK price value"}, color=plot["month_name"].eq(hi_month), color_discrete_map={True: "#1D9E75", False: "#B4B2A9"})
+        fig.update_layout(showlegend=False, height=360); st.plotly_chart(fig, width="stretch")
+        st.success(f"Historical average is highest in **{hi_month}** and lowest in **{lo_month}**. Missing months are not imputed.")
     with right:
-        st.subheader("Parashikimi 3-mujor / 3-month forecast")
-        fc = analysis.forecast(prices, crop)
-        hist = series.tail(24)
-        fig = go.Figure()
-        fig.add_scatter(x=hist["date"], y=hist["price"], name="historia / history")
-        fig.add_scatter(x=fc["date"], y=fc["hi"], line=dict(width=0), showlegend=False)
-        fig.add_scatter(x=fc["date"], y=fc["lo"], fill="tonexty", line=dict(width=0),
-                        name="±1 std", fillcolor="rgba(29,158,117,0.2)")
-        fig.add_scatter(x=fc["date"], y=fc["forecast"], mode="lines+markers",
-                        name="parashikimi / forecast", line=dict(dash="dash", color="#1D9E75"))
-        fig.update_layout(height=360, yaxis_title="EUR",
-                          legend=dict(orientation="h", y=1.1))
-        st.plotly_chart(fig, width="stretch")
-        st.caption("Metoda: mesatarja e te njejtit muaj neper vite ±1 devijim standard - "
-                   "e thjeshte dhe e shpjegueshme. / Method: same-calendar-month average "
-                   "across years ±1 std - simple and explainable.")
-
+        valid_fc = fc[fc["enough_history"]]; fig = go.Figure(); hist = series.tail(24)
+        fig.add_scatter(x=hist["date"], y=hist["price"], name="history")
+        if not valid_fc.empty:
+            fig.add_scatter(x=valid_fc["date"], y=valid_fc["hi"], line=dict(width=0), showlegend=False)
+            fig.add_scatter(x=valid_fc["date"], y=valid_fc["lo"], fill="tonexty", line=dict(width=0), name="historical variability band", fillcolor="rgba(29,158,117,0.2)")
+            fig.add_scatter(x=valid_fc["date"], y=valid_fc["forecast"], mode="lines+markers", name="seasonal baseline", line=dict(dash="dash", color="#1D9E75"))
+        fig.update_layout(height=360, yaxis_title="ASK price-value units", legend=dict(orientation="h", y=1.1)); st.plotly_chart(fig, width="stretch")
+        st.caption("Seasonal baseline = historical same-calendar-month average ± one standard deviation; it is not a trained predictive model.")
+        if fc["enough_history"].all(): st.caption(f"Forecast n: {', '.join(str(int(n)) for n in fc['n'])}. Rolling one-step backtest: n={backtest['n']}, MAE={backtest['mae'] if backtest['mae'] is not None else 'n/a'} price-value units.")
+        else: st.warning("One or more forecast months have fewer than three historical observations, so no precise baseline is shown.")
 with t2:
-    st.subheader(f"A ndikon moti i {region}-s ne cmimin e {crop}? / "
-                 f"Does {region}'s weather move the price?")
+    st.subheader(f"Weather context for {region} and national {crop} price")
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_scatter(x=panel["date"], y=panel["price"], name=f"{crop} EUR")
-    fig.add_bar(x=panel["date"], y=panel["rain_mm"], name="shiu / rain (mm)",
-                opacity=0.4, marker_color="#378ADD", secondary_y=True)
-    fig.update_layout(height=380, legend=dict(orientation="h", y=1.1))
-    fig.update_yaxes(title_text="EUR", secondary_y=False)
-    fig.update_yaxes(title_text="mm", secondary_y=True)
-    st.plotly_chart(fig, width="stretch")
-    cc = st.columns(3)
-    cc[0].metric("korrelacioni shi->cmim (i njejti muaj)", corrs["rain_mm"])
-    cc[1].metric("shiu 1 muaj perpara / rain 1 month earlier", corrs["rain_lag1"])
-    cc[2].metric("temperatura 2 muaj perpara / temp 2 months earlier", corrs["temp_lag2"])
-    st.caption("Kujdes: korrelacioni nuk eshte shkak-pasoje; cmimet e ASK jane kombetare, "
-               "moti eshte i regjionit tend. / Note: correlation is not causation; ASK "
-               "prices are national while weather is your region's.")
-
+    fig.add_scatter(x=panel["date"], y=panel["price"], name=f"{crop} price"); fig.add_bar(x=panel["date"], y=panel["rain_mm"], name="rain (mm)", opacity=0.4, marker_color="#378ADD", secondary_y=True)
+    fig.update_layout(height=380, legend=dict(orientation="h", y=1.1)); fig.update_yaxes(title_text="ASK price value", secondary_y=False); fig.update_yaxes(title_text="rain (mm)", secondary_y=True); st.plotly_chart(fig, width="stretch")
+    cc = st.columns(3); cc[0].metric("Same-month rain correlation", corrs["rain_mm"]); cc[1].metric("Rain one month earlier", corrs["rain_lag1"]); cc[2].metric("Temperature two months earlier", corrs["temp_lag2"])
+    st.caption(f"Matched months: {len(panel)} ({panel['date'].min():%Y-%m}–{panel['date'].max():%Y-%m}). Exploratory only: ASK prices are national and weather comes from a {region} city coordinate; correlation does not establish causation.")
 with t3:
-    st.subheader("Cmimet e produkteve vs kostot e inputeve / Output prices vs input costs")
-    fig = go.Figure()
-    fig.add_scatter(x=ms["date"], y=ms["out_rebased"], name="cmimet e prodhimit / output prices")
-    fig.add_scatter(x=ms["date"], y=ms["in_rebased"], name="kostot e inputeve / input costs")
-    fig.add_scatter(x=ms["date"], y=ms["margin"], name="marzha / margin",
-                    line=dict(dash="dot", color="#D85A30"))
-    fig.add_hline(y=100, line_dash="dash", line_color="gray")
-    fig.update_layout(height=380, yaxis_title="index, Jan 2022 = 100",
-                      legend=dict(orientation="h", y=1.1))
-    st.plotly_chart(fig, width="stretch")
-    m = ms.iloc[-1]["margin"]
-    verdict = ("cmimet kane rritur me shume se kostot - marzhat me te mira" if m > 100
-               else "kostot po rriten me shpejt se cmimet - marzhat nen presion")
-    st.success(f"Marzha tani: **{m:.1f}** (Jan 2022 = 100) - {verdict}. / Margin now "
-               f"{m:.1f}: {'prices have outrun input costs' if m > 100 else 'input costs are outrunning prices'} "
-               f"since Jan 2022.")
-
+    st.subheader("Kosovo-wide agricultural price-cost index ratio (proxy)")
+    fig = go.Figure(); fig.add_scatter(x=ms["date"], y=ms["out_rebased"], name="output price index"); fig.add_scatter(x=ms["date"], y=ms["in_rebased"], name="input price index"); fig.add_scatter(x=ms["date"], y=ms["margin"], name="price-cost index ratio", line=dict(dash="dot", color="#D85A30")); fig.add_hline(y=100, line_dash="dash", line_color="gray")
+    fig.update_layout(height=380, yaxis_title="index, Jan 2022 = 100", legend=dict(orientation="h", y=1.1)); st.plotly_chart(fig, width="stretch")
+    st.info(f"Latest ratio: **{ms.iloc[-1]['margin']:.1f}** in {ms.iloc[-1]['date']:%B %Y}. Above 100 means national output prices rose faster than national input prices since Jan 2022; it is not this crop's or this farm's profit margin.")
 with t4:
-    st.subheader("Nominal vs real (parate e 2022-es) / in 2022 money")
-    fig = go.Figure()
-    fig.add_scatter(x=real["date"], y=real["price"], name="nominal EUR")
-    fig.add_scatter(x=real["date"], y=real["real_price"], name="real EUR (2022)",
-                    line=dict(color="#534AB7"))
-    fig.update_layout(height=380, yaxis_title="EUR", legend=dict(orientation="h", y=1.1))
-    st.plotly_chart(fig, width="stretch")
-    st.caption("Deflatuar me inflacionin e Kosoves (World Bank, XKX). / Deflated with "
-               "Kosovo's own CPI (World Bank, country code XKX).")
-
-st.divider()
-st.caption("Te dhenat: ASKdata (Agjencia e Statistikave te Kosoves), Open-Meteo, "
-           "World Bank - te gjitha per Kosoven 🇽🇰, te marra live permes API-ve dhe "
-           "te ruajtura 1 ore ne cache, me kopje rezerve parquet nese nje API bie.")
+    st.subheader("Nominal vs real ASK price value (2022 money, annual CPI approximation)")
+    fig = go.Figure(); fig.add_scatter(x=real["date"], y=real["price"], name="nominal ASK price value"); fig.add_scatter(x=real["date"], y=real["real_price"], name="real price value (2022 money)", line=dict(color="#534AB7")); fig.update_layout(height=380, yaxis_title="ASK price-value units", legend=dict(orientation="h", y=1.1)); st.plotly_chart(fig, width="stretch")
+    last_real = real.loc[real["cpi_available"], "date"].max()
+    st.caption(f"Uses Kosovo annual CPI inflation from the World Bank. Real-price values are only shown through {last_real:%B %Y}; later months are blank until published CPI exists. Annual CPI is a coarse approximation for monthly prices.")
+st.divider(); st.caption("Sources: ASKdata (Kosovo Agency of Statistics), Open-Meteo Archive, and World Bank XKX. See docs/data_sources.md and scripts/validate_sources.py.")
