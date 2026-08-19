@@ -5,7 +5,7 @@ from pathlib import Path
 import streamlit as st
 
 st.set_page_config(
-    page_title="Rreth aplikacionit | Këshilltari i Fermerit",
+    page_title="About | Kosovo Farmer's Price Advisor",
     page_icon="ℹ️",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -45,7 +45,7 @@ if True:
         f"""
         <div class="hero"><div class="hero-copy">
           <div class="eyebrow">Kosovo data app</div>
-          <h1>🌾 Këshilltari i Fermerit</h1>
+          <h1>🌾 Kosovo Farmer's Price Advisor</h1>
           <p>A simple evidence tool for a Kosovar farmer deciding when to consider selling a selected product. It turns public price, weather, cost-index, and inflation data into a transparent selling-timing view.</p>
           </div>
           <div class="hero-qr">
@@ -73,7 +73,7 @@ with top_left:
     )
 with top_right:
     st.info("**Built for one decision**\n\nSelling timing—not crop selection, investment advice, or a guaranteed forecast.")
-    if st.button("Open Këshilltari i Fermerit", icon="🌾", type="primary", use_container_width=True):
+    if st.button("Open the Price Advisor", icon="🌾", type="primary", use_container_width=True):
         st.session_state["advisor_opened"] = True
         st.switch_page("app.py")
 
