@@ -11,7 +11,7 @@ import analysis
 from ingest import askdata, openmeteo, worldbank
 from ingest.common import load_with_fallback
 
-st.set_page_config(page_title="Këshilltari i Fermerit", page_icon="🌾", layout="wide")
+st.set_page_config(page_title="Kosovo Farmer's Price Advisor", page_icon="🌾", layout="wide")
 
 # New visitors begin with the contextual About page; its CTA opens this advisor.
 if not st.session_state.get("advisor_opened", False):
@@ -59,15 +59,15 @@ if not safe_regions:
     st.error("No bundled weather fallback is available. Restore data/fallback/weather_*.parquet.")
     st.stop()
 
-st.sidebar.title("🌾 Këshilltari i Fermerit")
-st.sidebar.caption("For a Kosovar farmer deciding when to sell a selected product. / Për kohën e shitjes së një produkti të zgjedhur.")
+st.sidebar.title("🌾 Kosovo Farmer's Price Advisor")
+st.sidebar.caption("For a Kosovar farmer deciding when to sell a selected product.")
 products = sorted(prices["product"].unique())
-crop = st.sidebar.selectbox("Produkt / Product", products, index=products.index("Potato") if "Potato" in products else 0)
-region = st.sidebar.selectbox("Rajoni i motit / Weather region", safe_regions)
+crop = st.sidebar.selectbox("Product", products, index=products.index("Potato") if "Potato" in products else 0)
+region = st.sidebar.selectbox("Weather region", safe_regions)
 weather_result = load_weather(region)
 weather = weather_result.data
 st.sidebar.caption("Only regions with bundled weather snapshots are shown so the app also works offline.")
-with st.sidebar.expander("Statusi i të dhënave / Data status"):
+with st.sidebar.expander("Data status"):
     show_status("Farm-gate prices", prices_result, "unit: verify in ASK metadata")
     show_status("Output index", out_result, "index")
     show_status("Input index", in_result, "index")
@@ -94,11 +94,11 @@ month_row = season[season["month"] == now["date"].month].iloc[0]
 profile = analysis.seasonal_profile(prices, crop)
 signal = analysis.selling_signal(now, float(month_row["avg"]), fc)
 
-st.title(f"{crop}: kur të shes? / When should I consider selling?")
+st.title(f"{crop}: when should I consider selling?")
 st.caption(f"National ASK farm-gate prices through {now['date']:%B %Y}. This app supports selling timing, not a crop-profitability recommendation.")
 signal_col, c1, c2, c3 = st.columns([1.5, 1, 1, 1])
 signal_col.metric("Historical selling signal", signal["label"], signal["reason"])
-c1.metric(f"ASK price value / Vlera ({now['date']:%b %Y})", f"{now['price']:.2f}", f"{now['price'] - prev['price']:+.2f} vs prior month")
+c1.metric(f"ASK price value ({now['date']:%b %Y})", f"{now['price']:.2f}", f"{now['price'] - prev['price']:+.2f} vs prior month")
 c2.metric("Usual value for this month", f"{month_row['avg']:.2f}", f"n={int(month_row['n'])} historical observations")
 c3.metric("Historical high-average month", hi_month)
 if signal["next_average"] is not None:
@@ -111,7 +111,7 @@ context = (f"selected product={crop}; national ASK price value={now['price']:.2f
            f"agricultural price-cost index ratio={ms.iloc[-1]['margin']:.1f} in {ms.iloc[-1]['date']:%Y-%m}; "
            f"weather-price correlations={corrs}, n_matched_months={len(panel)}, weather_region={region}; "
            f"real price available through {real.loc[real['cpi_available'], 'date'].max():%Y-%m} using annual CPI")
-if st.button("🤖 AI insight / Analiza AI"):
+if st.button("🤖 AI insight"):
     insight = cached_insight(context, api_key())
     if insight: st.info(insight)
     else:
