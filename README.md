@@ -1,4 +1,4 @@
-# 🌾 Këshilltari i Fermerit — Kosovo Farmer's Price Advisor
+# 🌾 Kosovo Farmer's Price Advisor
 
 A Streamlit decision-support app for a Kosovar farmer deciding **when to consider selling a selected product**. It does not recommend what to plant or calculate farm profit: crop-specific yield, costs, storage, and suitability data are not included.
 

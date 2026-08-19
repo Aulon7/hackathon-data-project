@@ -5,7 +5,7 @@ Use only the aggregated data below. Write exactly 3 short sentences in simple En
 1) compare the current national price and its date with the seasonal norm and sample size,
 2) describe the Kosovo-wide price-cost proxy or an exploratory weather finding without calling it a cause,
 3) give a conditional selling-timing tip and mention uncertainty.
-Then repeat the same 3 sentences in Albanian. Do not recommend what to plant, do not claim profit, do not claim causation, do not invent missing data, and include the data period. No preamble or markdown.
+Do not recommend what to plant, do not claim profit, do not claim causation, do not invent missing data, and include the data period. No preamble or markdown.
 
 DATA:
 {context}
